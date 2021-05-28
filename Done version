@@ -1,0 +1,283 @@
+#define _CRT_SECURE_NO_DEPRECATE
+#include <stdio.h>
+#include <png.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <string.h>
+
+
+#define raw  			25
+#define	col				25
+#define pixel_square_size  20  
+
+
+typedef struct
+{
+	uint8_t red;
+	uint8_t green;
+	uint8_t blue;
+	uint8_t alpha;
+} pixel_t;
+
+
+
+typedef struct
+{
+	pixel_t* pixels;
+	size_t width;
+	size_t height;
+} bitmap_t;
+
+/* Given "bitmap", this returns the pixel of bitmap at the point
+("x", "y"). */
+
+static pixel_t* pixel_at(bitmap_t* bitmap, int x, int y)
+{
+	return bitmap->pixels + bitmap->width * y + x;
+}
+
+/* Write "bitmap" to a PNG file specified by "path"; returns 0 on
+success, non-zero on error. */
+
+static int save_png_to_file(bitmap_t* bitmap, const char* path)
+{
+	FILE* fp;
+	png_structp png_ptr = NULL;
+	png_infop info_ptr = NULL;
+	size_t x, y;
+	png_byte** row_pointers = NULL;
+	/* "status" contains the return value of this function. At first
+	it is set to a value which means 'failure'. When the routine
+	has finished its work, it is set to a value which means
+	'success'. */
+	int status = -1;
+	/* The following number is set by trial and error only. I cannot
+	see where it it is documented in the libpng manual.
+	*/
+	int pixel_size = 4;
+	int depth = 8;
+
+	fp = fopen(path, "wb");
+	if (!fp) {
+		goto fopen_failed;
+	}
+
+	png_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+	if (png_ptr == NULL) {
+		goto png_create_write_struct_failed;
+	}
+
+	info_ptr = png_create_info_struct(png_ptr);
+	if (info_ptr == NULL) {
+		goto png_create_info_struct_failed;
+	}
+
+	/* Set up error handling. */
+
+	if (setjmp(png_jmpbuf(png_ptr))) {
+		goto png_failure;
+	}
+
+	/* Set image attributes. */
+
+	png_set_IHDR(png_ptr,
+		info_ptr,
+		bitmap->width,
+		bitmap->height,
+		depth,
+		PNG_COLOR_TYPE_RGBA,
+		PNG_INTERLACE_NONE,
+		PNG_COMPRESSION_TYPE_DEFAULT,
+		PNG_FILTER_TYPE_DEFAULT);
+
+	/* Initialize rows of PNG. */
+
+	row_pointers = png_malloc(png_ptr, bitmap->height * sizeof(png_byte*));
+	for (y = 0; y < bitmap->height; ++y) {
+		png_byte* row =
+			png_malloc(png_ptr, sizeof(uint8_t) * bitmap->width * pixel_size);
+		row_pointers[y] = row;
+		for (x = 0; x < bitmap->width; ++x) {
+			pixel_t* pixel = pixel_at(bitmap, x, y);
+			*row++ = pixel->red;
+			*row++ = pixel->green;
+			*row++ = pixel->blue;
+			*row++ = pixel->alpha;
+		}
+	}
+
+	/* Write the image data to "fp". */
+
+	png_init_io(png_ptr, fp);
+	png_set_rows(png_ptr, info_ptr, row_pointers);
+	png_write_png(png_ptr, info_ptr, PNG_TRANSFORM_IDENTITY, NULL);
+
+	/* The routine has successfully written the file, so we set
+	"status" to a value which indicates success. */
+
+	status = 0;
+
+	for (y = 0; y < bitmap->height; y++) {
+		png_free(png_ptr, row_pointers[y]);
+	}
+	png_free(png_ptr, row_pointers);
+
+png_failure:
+png_create_info_struct_failed:
+	png_destroy_write_struct(&png_ptr, &info_ptr);
+png_create_write_struct_failed:
+	fclose(fp);
+fopen_failed:
+	return status;
+}
+
+/* Given "value" and "max", the maximum value which we expect "value"
+to take, this returns an integer between 0 and 255 proportional to
+"value" divided by "max". */
+
+static int pix(int value, int max)
+{
+	if (value < 0)
+		return 0;
+	return (int)(256.0 * ((double)(value) / (double)max));
+}
+
+
+
+
+int clear(bitmap_t image)
+{
+	for (int y = 0; y < image.height; y++)
+	{
+		for (int x = 0; x < image.width; x++)
+		{
+			pixel_t* pixel = pixel_at(&image, x, y);
+			pixel->red = 255;
+			pixel->green = 255;
+			pixel->blue = 255;
+			pixel->alpha = 255;
+		}
+	}
+	return 0;
+}
+
+
+int paint2(int rgbcolor, bitmap_t image, int x, int y)
+{
+	for (int o = y; o < y + pixel_square_size; o++)
+	{
+		for (int u = x; u < x + pixel_square_size; u++)
+		{
+			pixel_t* pixel = pixel_at(&image, u, o);
+			pixel->red = (rgbcolor >> 16) & 0xFF;
+			pixel->green = (rgbcolor >> 8) & 0xFF;
+			pixel->blue = rgbcolor & 0xFF;;
+			pixel->alpha = 255;
+		}
+	}
+	return 0;
+}
+
+
+void DrawStroke(bitmap_t image, int array[raw][col], int matrColor[raw])
+{
+	int color;
+	for (int i = 0; i < raw; i++)
+	{
+		for (int j = 0; j < col; j++)
+		{
+			for (int ii = 0; ii < raw; ii++)
+			{
+				if (array[j][i] == ii)
+				{
+					color = matrColor[ii];
+				}
+			}
+
+			paint2(color, image, pixel_square_size * i, pixel_square_size * j);
+		}
+	}
+}
+
+
+
+int main()
+{
+	bitmap_t image;
+	image.width = (raw)*pixel_square_size;
+	image.height = (col)*pixel_square_size;
+	char name[] = "frame0000.png"; 
+
+	
+	image.pixels = calloc(sizeof(pixel_t), image.width * image.height);
+
+	srand(time(0));
+
+	
+	int matrColor[raw] = { 0xff0000, 0xff2b00, 0xff5f00,0xff9000,0xfff000,0xb0ff00, 0x80ff00, 0x4eff00, 0x00ff07,  0x00ff70,  0x00ffa1, 0x00ffd0,  0x00ffff,  0x00d0ff, 0x00a0ff,  0x003dff,  0x1900ff,  0x8300ff, 0xb000ff, 0xe000ff, 0xff00f0, 0xff00c0, 0xff0090, 0xff005f, 0xff002b };
+
+
+	printf("Random: \n");
+	int array[raw][col];
+	for (int i = 0; i < raw; i++)
+	{
+		for (int j = 0; j < col; j++)
+		{
+			array[i][j] = j;
+		}
+		srand(i);
+		for (int j = col - 1; j >= 1; j--) {
+			int k = rand() % (j + 1);
+
+			int tmp = array[i][k];
+			array[i][k] = array[i][j];
+			array[i][j] = tmp;
+			printf("%d ", array[i][j]);
+		}
+		printf("\n");
+	}
+
+	printf("\n\n");
+	printf("Sort: \n");
+	int counter = 0;
+	clear(image);
+	int t;
+	int countSwaps = 0;
+	for (int i = 0; i < col; i++)
+	{
+		for (int j = 1; j < col - i; j++)
+		{
+			for (int k = 0; k < raw; k++)
+			{
+				if (array[k][j] > array[k][j - 1])
+				{
+					t = array[k][j];
+					array[k][j] = array[k][j - 1];
+					array[k][j - 1] = t;
+					countSwaps++;
+				}
+			}
+			DrawStroke(image, array, matrColor);
+
+			if (counter >= 1000) name[5] = counter / 1000 + '0';
+			if (counter >= 100) name[6] = (counter % 1000 - counter % 100) / 100 + '0';
+			if (counter >= 10) name[7] = (counter % 100 - counter % 10) / 10 + '0';
+			name[8] = counter % 10 + '0';
+
+			save_png_to_file(&image, name);
+			counter++;
+
+		}
+	}
+	
+	for (int i = 0; i < col; i++) {
+		for (int j = 0; j < col; j++) {
+			printf("%d ", array[i][j]);
+		}
+		printf("\n");
+	}
+	printf(" Count Swaps: %d \n\n", countSwaps);
+
+	return 0;
+}
